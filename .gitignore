@@ -1,6 +1,6 @@
+.venv/
+.web/
 __pycache__/
 *.py[cod]
-.states
-.web
-assets/external/
-*.db
+.pytest_cache/
+.DS_Store
