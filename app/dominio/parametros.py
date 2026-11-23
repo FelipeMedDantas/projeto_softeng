@@ -26,6 +26,10 @@ class ParametrosPrioridade:
     limite_alta: int = 8
     limite_media: int = 5
     capacidade_fila: int = 30
+    tempo_sessao_min: int = 30
+    max_tentativas_login: int = 5
+    tempo_bloqueio_min: int = 5
+    iteracoes_hash_senha: int = 600000
 
 
 PARAMETROS_PADRAO = ParametrosPrioridade()
@@ -88,6 +92,10 @@ def validar_parametros(parametros: ParametrosPrioridade) -> None:
         "limite_alta",
         "limite_media",
         "capacidade_fila",
+        "tempo_sessao_min",
+        "max_tentativas_login",
+        "tempo_bloqueio_min",
+        "iteracoes_hash_senha",
     )
     for nome_campo in campos_inteiros:
         valor = getattr(parametros, nome_campo)
@@ -110,6 +118,14 @@ def validar_parametros(parametros: ParametrosPrioridade) -> None:
         raise ValueError("O limite alto não pode ser menor que o limite médio.")
     if parametros.capacidade_fila < 1:
         raise ValueError("A capacidade da fila deve ser pelo menos 1.")
+    for nome_campo in (
+        "tempo_sessao_min",
+        "max_tentativas_login",
+        "tempo_bloqueio_min",
+        "iteracoes_hash_senha",
+    ):
+        if getattr(parametros, nome_campo) <= 0:
+            raise ValueError(f"O parâmetro {nome_campo} deve ser maior que zero.")
 
 
 def alterar_parametros(

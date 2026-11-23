@@ -1,0 +1,48 @@
+input[name="email"],
+input[name="senha"] {
+  background-color: #FFFFFF !important;
+  color: #111827 !important;
+  border: 1px solid #9CA3AF !important;
+}
+
+input[name="email"]::placeholder,
+input[name="senha"]::placeholder {
+  color: #6B7280 !important;
+  opacity: 1 !important;
+}
+
+input[name="email"]:focus-visible,
+input[name="senha"]:focus-visible {
+  outline: 2px solid #276749 !important;
+  outline-offset: 2px !important;
+  border-color: #276749 !important;
+}
+
+button#botao-mostrar-senha {
+  background-color: #FFFFFF !important;
+  color: #111827 !important;
+  border: 1px solid #9CA3AF !important;
+}
+
+button#botao-mostrar-senha:hover {
+  background-color: #F3F4F6 !important;
+}
+
+button#botao-mostrar-senha:focus-visible {
+  outline: 2px solid #276749 !important;
+  outline-offset: 2px !important;
+}
+
+button#botao-entrar {
+  background-color: #166534 !important;
+  color: #FFFFFF !important;
+}
+
+button#botao-entrar:hover {
+  background-color: #14532D !important;
+}
+
+button#botao-entrar:focus-visible {
+  outline: 2px solid #111827 !important;
+  outline-offset: 2px !important;
+}

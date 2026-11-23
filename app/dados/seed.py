@@ -4,6 +4,7 @@ from datetime import date
 from typing import TYPE_CHECKING
 
 from app.dominio.modelos import Paciente, PerfilUsuario, Sintoma, Usuario
+from app.servicos.autenticacao import criar_hash_senha
 
 if TYPE_CHECKING:
     from app.dados.repositorio import RepositorioMemoria
@@ -30,12 +31,37 @@ def carregar_seed(repositorio: "RepositorioMemoria | None" = None) -> None:
         repositorio = obter_repositorio()
 
     usuarios = (
-        Usuario("usuario-admin", "Administração Fictícia", PerfilUsuario.ADMIN),
-        Usuario("usuario-recepcao", "Recepção Fictícia", PerfilUsuario.RECEPCAO),
-        Usuario("usuario-medico", "Médico Fictício", PerfilUsuario.MEDICO),
+        (
+            "usuario-admin",
+            "Administração Fictícia",
+            PerfilUsuario.ADMIN,
+            "admin@example.test",
+            "DemoAdmin-02!",
+        ),
+        (
+            "usuario-recepcao",
+            "Recepção Fictícia",
+            PerfilUsuario.RECEPCAO,
+            "recepcao@example.test",
+            "DemoRecepcao-02!",
+        ),
+        (
+            "usuario-medico",
+            "Médico Fictício",
+            PerfilUsuario.MEDICO,
+            "medico@example.test",
+            "DemoMedico-02!",
+        ),
     )
-    for usuario in usuarios:
-        if repositorio.obter("usuarios", usuario.id) is None:
+    for identificador, nome, perfil, email, senha in usuarios:
+        if repositorio.obter("usuarios", identificador) is None:
+            usuario = Usuario(
+                identificador,
+                nome,
+                perfil,
+                email=email,
+                senha_hash=criar_hash_senha(senha),
+            )
             repositorio.criar("usuarios", usuario)
 
     for indice in range(10):

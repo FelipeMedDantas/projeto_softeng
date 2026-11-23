@@ -32,6 +32,30 @@ class Usuario:
     nome: str
     perfil: PerfilUsuario
     ativo: bool = True
+    email: str = ""
+    senha_hash: str = ""
+
+    def __post_init__(self) -> None:
+        self.email = self.email.strip().lower()
+
+
+@dataclass
+class TentativaLogin:
+    """Estado temporário de falhas para um e-mail normalizado."""
+
+    id: str
+    falhas_consecutivas: int = 0
+    bloqueado_ate: datetime | None = None
+
+
+@dataclass
+class SessaoAutenticada:
+    """Sessão identificada somente pelo digest do token opaco."""
+
+    id: str
+    usuario_id: str
+    criada_em: datetime
+    ultima_atividade: datetime
 
 
 @dataclass
@@ -72,7 +96,7 @@ class RegistroAuditoria:
     """Registra uma ação realizada no sistema."""
 
     id: str
-    usuario_id: str
+    usuario_id: str | None
     acao: str
     entidade: str
     entidade_id: str

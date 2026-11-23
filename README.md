@@ -27,6 +27,18 @@ reflex run
 
 A aplicação estará disponível no endereço local informado pelo Reflex.
 
+## Contas de demonstração
+
+Use estas contas fictícias apenas em ambientes locais de demonstração:
+
+| Perfil | E-mail | Senha |
+| --- | --- | --- |
+| Administração | `admin@example.test` | `DemoAdmin-02!` |
+| Recepção | `recepcao@example.test` | `DemoRecepcao-02!` |
+| Médico | `medico@example.test` | `DemoMedico-02!` |
+
+Não reutilize essas credenciais em outros sistemas ou ambientes. O seed guarda apenas hashes com salt; as senhas são usadas somente para criar os hashes do conjunto fictício.
+
 ## Testes
 
 Com o ambiente virtual ativado:
