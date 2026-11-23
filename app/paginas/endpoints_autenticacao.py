@@ -1,6 +1,8 @@
 """Endpoints HTTP server-side para a sessão de autenticação."""
 
 import json
+import logging
+from urllib.parse import urlencode
 
 from reflex.utils.exec import is_prod_mode
 from starlette.applications import Starlette
@@ -10,6 +12,12 @@ from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.dados.repositorio import obter_repositorio
+from app.dominio.autorizacao import (
+    PERFIS_POR_ROTA,
+    destino_pos_login,
+    perfil_pode_acessar,
+    rota_inicial,
+)
 from app.dominio.parametros import ler_parametros
 from app.servicos.autenticacao import autenticar, encerrar_sessao, validar_sessao
 
@@ -17,7 +25,8 @@ from app.servicos.autenticacao import autenticar, encerrar_sessao, validar_sessa
 NOME_COOKIE_SESSAO = "atendimento_sessao"
 ROTAS_PUBLICAS = {
     "/login",
-    "/login/",
+    "/403",
+    "/404",
     "/favicon.ico",
     "/robots.txt",
     "/sitemap.xml",
@@ -68,12 +77,28 @@ async def endpoint_login(request: Request) -> JSONResponse:
         corpo = {}
     email = corpo.get("email")
     senha = corpo.get("senha")
-    resultado = autenticar(
-        email if isinstance(email, str) else "",
-        senha if isinstance(senha, str) else "",
-        repositorio=obter_repositorio(),
-    )
+    candidato = corpo.get("next")
+    try:
+        resultado = autenticar(
+            email if isinstance(email, str) else "",
+            senha if isinstance(senha, str) else "",
+            repositorio=obter_repositorio(),
+        )
+    except Exception:
+        logging.exception("Erro inesperado ao processar login.")
+        return _resposta_json(
+            {
+                "sucesso": False,
+                "mensagem": "Ocorreu um erro interno ao autenticar.",
+            },
+            500,
+        )
     perfil = resultado.perfil.value if resultado.perfil is not None else None
+    destino = (
+        destino_pos_login(candidato, resultado.perfil)
+        if resultado.sucesso and resultado.perfil is not None
+        else None
+    )
     status_code = 200 if resultado.sucesso else 401
     resposta = _resposta_json(
         {
@@ -81,6 +106,7 @@ async def endpoint_login(request: Request) -> JSONResponse:
             "mensagem": resultado.mensagem,
             "usuario_id": resultado.usuario_id,
             "perfil": perfil,
+            "destino": destino,
         },
         status_code,
     )
@@ -128,19 +154,25 @@ async def endpoint_logout(request: Request) -> JSONResponse:
 
 
 def proteger_paginas(aplicacao: ASGIApp) -> ASGIApp:
-    """Exige sessão antes de entregar qualquer página interna do sistema."""
+    """Valida sessão e perfil antes de entregar uma rota protegida."""
 
     async def middleware(scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "http" and scope["method"] in {"GET", "HEAD"}:
             caminho = scope.get("path", "/")
+            rota = caminho.rstrip("/") or "/"
             arquivo_estatico = caminho.lower().endswith(
                 (".css", ".js", ".map", ".ico", ".png", ".jpg", ".jpeg", ".svg", ".woff", ".woff2", ".ttf")
             )
             publico = (
-                caminho in ROTAS_PUBLICAS
+                rota in ROTAS_PUBLICAS
                 or caminho.startswith(("/api/", "/_", "/assets/", "/static/"))
                 or arquivo_estatico
             )
+            if not publico and rota not in PERFIS_POR_ROTA and rota != "/":
+                resposta = RedirectResponse("/404", status_code=303)
+                await resposta(scope, receive, send)
+                return
+
             if not publico:
                 requisicao = Request(scope, receive)
                 token = requisicao.cookies.get(NOME_COOKIE_SESSAO)
@@ -148,13 +180,31 @@ def proteger_paginas(aplicacao: ASGIApp) -> ASGIApp:
                     token,
                     repositorio=obter_repositorio(),
                 )
-                if not resultado.sucesso:
-                    destino = "/login"
+                if not resultado.sucesso or resultado.perfil is None:
+                    parametros: dict[str, str] = {}
                     if resultado.mensagem == "Sua sessão expirou. Entre novamente.":
-                        destino = "/login?sessao=expirada"
+                        parametros["sessao"] = "expirada"
+                    if rota != "/":
+                        parametros["next"] = rota
+                    destino = "/login"
+                    if parametros:
+                        destino = f"{destino}?{urlencode(parametros)}"
                     resposta = RedirectResponse(destino, status_code=303)
                     if token:
                         _remover_cookie_sessao(resposta)
+                    await resposta(scope, receive, send)
+                    return
+
+                if rota == "/":
+                    resposta = RedirectResponse(
+                        rota_inicial(resultado.perfil),
+                        status_code=303,
+                    )
+                    await resposta(scope, receive, send)
+                    return
+
+                if not perfil_pode_acessar(resultado.perfil, rota):
+                    resposta = RedirectResponse("/403", status_code=303)
                     await resposta(scope, receive, send)
                     return
 

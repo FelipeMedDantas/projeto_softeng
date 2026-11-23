@@ -6,26 +6,30 @@ import reflex as rx
 
 from app.componentes.layout import layout_base
 from app.componentes.mensagens import mensagem
+from rxconfig import config
+
+
+_API_URL_JS = json.dumps(config.api_url.rstrip("/"))
 
 
 _SCRIPT_LOGIN = """
 (async () => {
-  try {
     const formulario = document.getElementById('formulario-login');
     const dados = Object.fromEntries(new FormData(formulario).entries());
-    const resposta = await fetch('/api/autenticacao/login', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(dados)
+    dados.next = new URLSearchParams(window.location.search).get('next');
+        const resposta = await fetch(__API_URL__ + '/api/autenticacao/login', {
+        method: 'POST',
+            credentials: 'include',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(dados)
     });
     const corpo = await resposta.json();
-    return JSON.stringify({sucesso: corpo.sucesso, mensagem: corpo.mensagem, perfil: corpo.perfil});
-  } catch (erro) {
-    return JSON.stringify({sucesso: false, mensagem: 'Não foi possível acessar. Tente novamente.'});
+    if (corpo.sucesso && typeof corpo.destino === 'string') {
+        window.location.assign(corpo.destino);
   }
+    return JSON.stringify({sucesso: corpo.sucesso, mensagem: corpo.mensagem, perfil: corpo.perfil});
 })()
-"""
+""".replace("__API_URL__", _API_URL_JS)
 
 _SCRIPT_VALIDAR_SESSAO = """
 (async () => {
@@ -34,9 +38,9 @@ _SCRIPT_VALIDAR_SESSAO = """
         if (parametros.get('sessao') === 'expirada') {
             return JSON.stringify({sucesso: false, mensagem: 'Sua sessão expirou. Entre novamente.'});
         }
-    const resposta = await fetch('/api/autenticacao/sessao', {
+        const resposta = await fetch(__API_URL__ + '/api/autenticacao/sessao', {
       method: 'GET',
-      credentials: 'same-origin'
+            credentials: 'include'
     });
     const corpo = await resposta.json();
     return JSON.stringify({sucesso: corpo.sucesso, mensagem: corpo.mensagem, perfil: corpo.perfil});
@@ -44,7 +48,7 @@ _SCRIPT_VALIDAR_SESSAO = """
     return JSON.stringify({sucesso: false, mensagem: ''});
   }
 })()
-"""
+""".replace("__API_URL__", _API_URL_JS)
 
 
 class EstadoLogin(rx.State):
@@ -63,14 +67,14 @@ class EstadoLogin(rx.State):
         try:
             resultado = json.loads(resultado_json)
         except (json.JSONDecodeError, TypeError):
-            self.texto_mensagem = "Não foi possível acessar. Tente novamente."
+            self.texto_mensagem = "O servidor retornou uma resposta inválida."
             self.mensagem_erro = True
             return None
 
         if resultado.get("sucesso") is True:
             self.texto_mensagem = ""
             self.mensagem_erro = True
-            return rx.redirect("/")
+            return None
 
         self.texto_mensagem = str(resultado.get("mensagem") or "E-mail ou senha incorretos.")
         self.mensagem_erro = True

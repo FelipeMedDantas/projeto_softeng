@@ -192,6 +192,55 @@ def test_seed_global_carrega_e_permite_login_sem_chamada_manual() -> None:
     ]
 
 
+def test_importar_repositorio_carrega_seed_no_processo_backend() -> None:
+    import subprocess
+    import sys
+
+    script = """
+import app.dados.repositorio as repositorio
+assert len(repositorio._repositorio.listar("usuarios")) == 3
+"""
+    resultado = subprocess.run(
+        [sys.executable, "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert resultado.returncode == 0, resultado.stderr
+
+
+def test_estados_reflex_usam_somente_tipos_primitivos() -> None:
+    from app.componentes.layout import EstadoLayout
+    from app.paginas.login import EstadoLogin
+
+    for estado in (EstadoLogin, EstadoLayout):
+        assert all(
+            tipo in {str, bool, int}
+            for tipo in estado.__annotations__.values()
+        )
+
+
+def test_reflex_configura_portas_e_scripts_ao_backend() -> None:
+    from app.componentes.layout import _SCRIPT_LOGOUT
+    from app.paginas.login import _SCRIPT_LOGIN, _SCRIPT_VALIDAR_SESSAO
+    from rxconfig import config
+
+    assert config.frontend_port == 3000
+    assert config.backend_port == 8000
+    assert config.backend_host == "0.0.0.0"
+    assert config.api_url == "http://localhost:8000"
+
+    for script in (
+        _SCRIPT_LOGIN,
+        _SCRIPT_VALIDAR_SESSAO,
+        _SCRIPT_LOGOUT,
+    ):
+        assert config.api_url in script
+        assert "credentials: 'include'" in script
+        assert "fetch('/api/" not in script
+
+
 def test_repositorio_conta_falhas_bloqueia_e_libera_apos_prazo() -> None:
     from datetime import datetime, timedelta, timezone
 
@@ -584,6 +633,7 @@ def test_endpoint_login_define_cookie_seguro_sem_token_no_json(
 
     assert resposta.status_code == 200
     assert resposta.json()["sucesso"] is True
+    assert resposta.json()["destino"] == "/admin"
     assert "token" not in resposta.json()
     assert "DemoAdmin-02!" not in resposta.text
     assert cookie
@@ -593,6 +643,103 @@ def test_endpoint_login_define_cookie_seguro_sem_token_no_json(
     assert "secure" not in cabecalho_cookie
     digest = hashlib.sha256(cookie.encode("utf-8")).hexdigest()
     assert repositorio_com_seed_login.obter("sessoes", digest) is not None
+
+
+@pytest.mark.parametrize(
+    "mensagem",
+    [
+        "E-mail ou senha incorretos.",
+        "Conta desativada. Procure a administração.",
+        "Acesso bloqueado. Tente novamente em 5 minutos.",
+    ],
+)
+def test_endpoint_login_preserva_mensagem_de_negocio_do_servico(
+    monkeypatch: pytest.MonkeyPatch,
+    repositorio_com_seed_login: RepositorioMemoria,
+    mensagem: str,
+) -> None:
+    from starlette.testclient import TestClient
+
+    import app.paginas.endpoints_autenticacao as endpoints
+    from app.servicos.autenticacao import ResultadoAutenticacao
+
+    monkeypatch.setattr(endpoints, "obter_repositorio", lambda: repositorio_com_seed_login)
+    monkeypatch.setattr(
+        endpoints,
+        "autenticar",
+        lambda *args, **kwargs: ResultadoAutenticacao(False, mensagem),
+    )
+    cliente = TestClient(endpoints.rotas_autenticacao)
+
+    resposta = cliente.post(
+        "/api/autenticacao/login",
+        json={"email": "medico@example.test", "senha": "DemoMedico-02!"},
+    )
+
+    assert resposta.status_code == 401
+    assert resposta.json()["mensagem"] == mensagem
+
+
+def test_endpoint_login_registra_excecao_inesperada(
+    monkeypatch: pytest.MonkeyPatch,
+    repositorio_com_seed_login: RepositorioMemoria,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+
+    from starlette.testclient import TestClient
+
+    import app.paginas.endpoints_autenticacao as endpoints
+
+    def falhar_autenticacao(*args: object, **kwargs: object) -> object:
+        raise RuntimeError("falha interna de teste")
+
+    monkeypatch.setattr(endpoints, "obter_repositorio", lambda: repositorio_com_seed_login)
+    monkeypatch.setattr(endpoints, "autenticar", falhar_autenticacao)
+    cliente = TestClient(endpoints.rotas_autenticacao, raise_server_exceptions=False)
+
+    with caplog.at_level(logging.ERROR):
+        resposta = cliente.post(
+            "/api/autenticacao/login",
+            json={"email": "medico@example.test", "senha": "DemoMedico-02!"},
+        )
+
+    assert resposta.status_code == 500
+    assert "falha interna de teste" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("candidato", "destino_esperado"),
+    [
+        ("/perfil", "/perfil"),
+        ("https://externo.example/admin", "/admin"),
+        ("/recepcao", "/admin"),
+    ],
+)
+def test_endpoint_login_retorna_destino_validado_pelo_servidor(
+    monkeypatch: pytest.MonkeyPatch,
+    repositorio_com_seed_login: RepositorioMemoria,
+    candidato: str,
+    destino_esperado: str,
+) -> None:
+    from starlette.testclient import TestClient
+
+    import app.paginas.endpoints_autenticacao as endpoints
+
+    monkeypatch.setattr(endpoints, "obter_repositorio", lambda: repositorio_com_seed_login)
+    cliente = TestClient(endpoints.rotas_autenticacao)
+
+    resposta = cliente.post(
+        "/api/autenticacao/login",
+        json={
+            "email": "admin@example.test",
+            "senha": "DemoAdmin-02!",
+            "next": candidato,
+        },
+    )
+
+    assert resposta.status_code == 200
+    assert resposta.json()["destino"] == destino_esperado
 
 
 def test_endpoint_usa_secure_em_producao_e_logout_remove_cookie(
@@ -660,6 +807,9 @@ def test_guard_redireciona_sem_sessao_e_mantem_login_publico(
     async def pagina_login(_: Request) -> PlainTextResponse:
         return PlainTextResponse("login publico")
 
+    async def pagina_erro(_: Request) -> PlainTextResponse:
+        return PlainTextResponse("erro publico")
+
     async def rota_api(_: Request) -> PlainTextResponse:
         return PlainTextResponse("api publica")
 
@@ -669,7 +819,10 @@ def test_guard_redireciona_sem_sessao_e_mantem_login_publico(
     aplicacao = Starlette(
         routes=[
             Route("/", pagina_interna),
+            Route("/recepcao", pagina_interna),
             Route("/login", pagina_login),
+            Route("/403", pagina_erro),
+            Route("/404", pagina_erro),
             Route("/login.css", folha_estilo),
             Route("/api/ping", rota_api),
         ]
@@ -677,17 +830,25 @@ def test_guard_redireciona_sem_sessao_e_mantem_login_publico(
     cliente = TestClient(endpoints.proteger_paginas(aplicacao))
 
     raiz = cliente.get("/", follow_redirects=False)
+    rota_protegida = cliente.get("/recepcao", follow_redirects=False)
     login_publico = cliente.get("/login")
     api_publica = cliente.get("/api/ping")
     css_publico = cliente.get("/login.css")
+    caminho_inexistente = cliente.get("/nao-existe", follow_redirects=False)
+    pagina_404_publica = cliente.get("/404")
 
     assert raiz.status_code == 303
     assert raiz.headers["location"] == "/login"
+    assert rota_protegida.status_code == 303
+    assert rota_protegida.headers["location"] == "/login?next=%2Frecepcao"
     assert "conteudo interno" not in raiz.text
     assert login_publico.text == "login publico"
     assert api_publica.text == "api publica"
     assert css_publico.status_code == 200
     assert "#111827" in css_publico.text
+    assert caminho_inexistente.status_code == 303
+    assert caminho_inexistente.headers["location"] == "/404"
+    assert pagina_404_publica.text == "erro publico"
 
 
 def test_guard_permite_sessao_valida(
@@ -722,15 +883,106 @@ def test_guard_permite_sessao_valida(
 
     cliente = TestClient(
         endpoints.proteger_paginas(
-            Starlette(routes=[Route("/", pagina_interna)])
+            Starlette(routes=[Route("/medico", pagina_interna)])
         )
+    )
+    cliente.cookies.set(endpoints.NOME_COOKIE_SESSAO, token)
+
+    resposta = cliente.get("/medico", follow_redirects=False)
+
+    assert resposta.status_code == 200
+    assert resposta.text == "conteudo autenticado"
+
+
+def test_guard_raiz_redireciona_para_rota_inicial_do_perfil(
+    monkeypatch: pytest.MonkeyPatch,
+    repositorio_com_seed_login: RepositorioMemoria,
+) -> None:
+    import hashlib
+    import secrets
+    from datetime import datetime, timezone
+
+    from starlette.applications import Starlette
+    from starlette.requests import Request
+    from starlette.responses import PlainTextResponse
+    from starlette.routing import Route
+    from starlette.testclient import TestClient
+
+    import app.paginas.endpoints_autenticacao as endpoints
+    from app.dominio.modelos import PerfilUsuario, SessaoAutenticada, Usuario
+
+    monkeypatch.setattr(endpoints, "obter_repositorio", lambda: repositorio_com_seed_login)
+    usuario = Usuario("usuario-raiz-medico", "Pessoa Fictícia", PerfilUsuario.MEDICO)
+    repositorio_com_seed_login.criar("usuarios", usuario)
+    agora = datetime.now(timezone.utc)
+    token = secrets.token_urlsafe(24)
+    repositorio_com_seed_login.criar_sessao(
+        SessaoAutenticada(
+            hashlib.sha256(token.encode("utf-8")).hexdigest(),
+            usuario.id,
+            agora,
+            agora,
+        )
+    )
+
+    async def pagina(_: Request) -> PlainTextResponse:
+        return PlainTextResponse("raiz")
+
+    cliente = TestClient(
+        endpoints.proteger_paginas(Starlette(routes=[Route("/", pagina)]))
     )
     cliente.cookies.set(endpoints.NOME_COOKIE_SESSAO, token)
 
     resposta = cliente.get("/", follow_redirects=False)
 
-    assert resposta.status_code == 200
-    assert resposta.text == "conteudo autenticado"
+    assert resposta.status_code == 303
+    assert resposta.headers["location"] == "/medico"
+
+
+def test_guard_redireciona_perfil_sem_permissao_para_403(
+    monkeypatch: pytest.MonkeyPatch,
+    repositorio_com_seed_login: RepositorioMemoria,
+) -> None:
+    import hashlib
+    import secrets
+    from datetime import datetime, timezone
+
+    from starlette.applications import Starlette
+    from starlette.requests import Request
+    from starlette.responses import PlainTextResponse
+    from starlette.routing import Route
+    from starlette.testclient import TestClient
+
+    import app.paginas.endpoints_autenticacao as endpoints
+    from app.dominio.modelos import PerfilUsuario, SessaoAutenticada, Usuario
+
+    monkeypatch.setattr(endpoints, "obter_repositorio", lambda: repositorio_com_seed_login)
+    usuario = Usuario("usuario-negado-admin", "Admin Fictício", PerfilUsuario.ADMIN)
+    repositorio_com_seed_login.criar("usuarios", usuario)
+    agora = datetime.now(timezone.utc)
+    token = secrets.token_urlsafe(24)
+    repositorio_com_seed_login.criar_sessao(
+        SessaoAutenticada(
+            hashlib.sha256(token.encode("utf-8")).hexdigest(),
+            usuario.id,
+            agora,
+            agora,
+        )
+    )
+
+    async def pagina(_: Request) -> PlainTextResponse:
+        return PlainTextResponse("conteudo recepcao")
+
+    cliente = TestClient(
+        endpoints.proteger_paginas(Starlette(routes=[Route("/recepcao", pagina)]))
+    )
+    cliente.cookies.set(endpoints.NOME_COOKIE_SESSAO, token)
+
+    resposta = cliente.get("/recepcao", follow_redirects=False)
+
+    assert resposta.status_code == 303
+    assert resposta.headers["location"] == "/403"
+    assert "conteudo recepcao" not in resposta.text
 
 
 def test_guard_redireciona_sessao_expirada_e_apaga_cookie(
@@ -770,14 +1022,14 @@ def test_guard_redireciona_sessao_expirada_e_apaga_cookie(
 
     cliente = TestClient(
         endpoints.proteger_paginas(
-            Starlette(routes=[Route("/", pagina_interna)])
+            Starlette(routes=[Route("/admin", pagina_interna)])
         )
     )
     cliente.cookies.set(endpoints.NOME_COOKIE_SESSAO, token)
 
-    resposta = cliente.get("/", follow_redirects=False)
+    resposta = cliente.get("/admin", follow_redirects=False)
 
     assert resposta.status_code == 303
-    assert resposta.headers["location"] == "/login?sessao=expirada"
+    assert resposta.headers["location"] == "/login?sessao=expirada&next=%2Fadmin"
     assert "max-age=0" in resposta.headers["set-cookie"].lower()
     assert repositorio_com_seed_login.listar("sessoes") == []

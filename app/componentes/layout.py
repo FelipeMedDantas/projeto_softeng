@@ -1,10 +1,20 @@
 """Layout compartilhado da interface Reflex."""
 
 import json
+from http.cookies import CookieError, SimpleCookie
+from urllib.parse import urlencode
 
 import reflex as rx
 
+from app.dominio.autorizacao import ROTAS_INICIAIS, rotas_autorizadas
 from app.dominio.modelos import PerfilUsuario
+from app.dados.repositorio import obter_repositorio
+from app.paginas.endpoints_autenticacao import NOME_COOKIE_SESSAO
+from app.servicos.autenticacao import validar_sessao
+from rxconfig import config
+
+
+_API_URL_JS = json.dumps(config.api_url.rstrip("/"))
 
 
 ROTULOS_PERFIL = {
@@ -14,68 +24,128 @@ ROTULOS_PERFIL = {
     PerfilUsuario.ADMIN: "Administração",
 }
 
-MENUS_POR_PERFIL = {
-    PerfilUsuario.RECEPCAO: ("Entrada", "Fila de espera"),
-    PerfilUsuario.MEDICO: ("Atendimentos", "Pacientes"),
-    PerfilUsuario.PACIENTE: ("Meu atendimento", "Acompanhar fila"),
-    PerfilUsuario.ADMIN: ("Visão geral", "Parâmetros"),
+ROTULOS_ROTA = {
+    "/recepcao": "Recepção",
+    "/medico": "Atendimentos",
+    "/paciente": "Meu atendimento",
+    "/admin": "Administração",
+    "/perfil": "Meu perfil",
 }
 
-_SCRIPT_SESSAO = """
-(async () => {
-  try {
-    const resposta = await fetch('/api/autenticacao/sessao', {
-      method: 'GET',
-      credentials: 'same-origin'
-    });
-    const corpo = await resposta.json();
-    return JSON.stringify({sucesso: corpo.sucesso, perfil: corpo.perfil});
-  } catch (erro) {
-    return JSON.stringify({sucesso: false, perfil: null});
-  }
-})()
-"""
+_SCRIPT_LOGOUT = (
+    f"fetch({_API_URL_JS} + '/api/autenticacao/logout', "
+    "{method: 'POST', credentials: 'include'})"
+    ".finally(() => window.location.assign('/login'))"
+)
+
+
+def links_navegacao_perfil(perfil: str) -> list[dict[str, str]]:
+    """Cria somente links presentes na política do perfil informado."""
+
+    try:
+        perfil_enum = PerfilUsuario(perfil)
+    except ValueError:
+        return []
+
+    return [
+        {"rota": rota, "rotulo": ROTULOS_ROTA[rota]}
+        for rota in rotas_autorizadas(perfil_enum)
+    ]
+
+
+def acesso_confirmado_para_rota(
+    perfil: str,
+    rota_atual: str,
+    rota_verificada: str,
+) -> bool:
+    """Exibe conteúdo somente para a rota verificada do perfil autenticado."""
+
+    try:
+        perfil_enum = PerfilUsuario(perfil)
+    except ValueError:
+        return False
+
+    rota = rota_atual.rstrip("/") or "/"
+    return rota_verificada == rota and rota in rotas_autorizadas(perfil_enum)
+
+
+def decidir_redirecionamento_guardia(
+    autenticado: bool,
+    perfil: PerfilUsuario | None,
+    rota: str,
+    mensagem: str,
+) -> str | None:
+    """Decide o destino após validar sessão e permissão para a rota atual."""
+
+    rota_normalizada = rota.rstrip("/") or "/"
+    if not autenticado or perfil is None:
+        parametros: dict[str, str] = {}
+        if mensagem == "Sua sessão expirou. Entre novamente.":
+            parametros["sessao"] = "expirada"
+        if rota_normalizada != "/":
+            parametros["next"] = rota_normalizada
+        return f"/login?{urlencode(parametros)}" if parametros else "/login"
+
+    if rota_normalizada == "/":
+        return ROTAS_INICIAIS[perfil]
+    if rota_normalizada not in rotas_autorizadas(perfil):
+        return "/403"
+    return None
 
 
 class EstadoLayout(rx.State):
     """Mantém somente o rótulo visual do perfil confirmado pelo servidor."""
 
-    perfil_exibicao: str = ""
+    _perfil_exibicao: str = ""
+    _rota_verificada: str = ""
+
+    @rx.var
+    def perfil_exibicao(self) -> str:
+        return self._perfil_exibicao
+
+    @rx.var
+    def acesso_permitido(self) -> bool:
+        return acesso_confirmado_para_rota(
+            self._perfil_exibicao,
+            self.router.url.path,
+            self._rota_verificada,
+        )
+
+    @rx.var
+    def links_navegacao(self) -> list[dict[str, str]]:
+        return links_navegacao_perfil(self.perfil_exibicao)
 
     @rx.event
-    def definir_perfil(self, perfil: str) -> None:
-        if perfil in {item.value for item in MENUS_POR_PERFIL}:
-            self.perfil_exibicao = perfil
-        else:
-            self.perfil_exibicao = ""
+    def verificar_sessao(self) -> rx.event.EventSpec | None:
+        self._perfil_exibicao = ""
+        self._rota_verificada = ""
+        rota = self.router.url.path.rstrip("/") or "/"
 
-    @rx.event
-    def limpar_perfil(self) -> None:
-        self.perfil_exibicao = ""
-
-    @rx.event
-    def receber_sessao(
-        self,
-        resultado_json: str,
-    ) -> rx.event.EventSpec | None:
+        cookies = SimpleCookie()
         try:
-            resultado = json.loads(resultado_json)
-        except (json.JSONDecodeError, TypeError):
-            self.perfil_exibicao = ""
+            cookies.load(self.router.headers.cookie or "")
+        except CookieError:
+            cookies = SimpleCookie()
+        cookie_sessao = cookies.get(NOME_COOKIE_SESSAO)
+        resultado = validar_sessao(
+            cookie_sessao.value if cookie_sessao is not None else None,
+            repositorio=obter_repositorio(),
+        )
+        destino = decidir_redirecionamento_guardia(
+            resultado.sucesso,
+            resultado.perfil,
+            rota,
+            resultado.mensagem,
+        )
+        if destino is not None:
+            return rx.redirect(destino)
+
+        if resultado.perfil is None:
             return rx.redirect("/login")
 
-        perfil = resultado.get("perfil") if resultado.get("sucesso") is True else None
-        if isinstance(perfil, str) and perfil in {item.value for item in MENUS_POR_PERFIL}:
-            self.perfil_exibicao = perfil
-            return None
-
-        self.perfil_exibicao = ""
-        return rx.redirect("/login")
-
-    @rx.event
-    def verificar_sessao(self) -> rx.event.EventSpec:
-        self.perfil_exibicao = ""
-        return rx.call_script(_SCRIPT_SESSAO, callback=EstadoLayout.receber_sessao)
+        self._perfil_exibicao = resultado.perfil.value
+        self._rota_verificada = rota
+        return None
 
 
 def layout_base(
@@ -92,6 +162,9 @@ def layout_base(
         EstadoLayout.perfil_exibicao
         if protegido
         else (perfil.value if perfil is not None else "")
+    )
+    layout_autorizado: bool | rx.Var[bool] = (
+        EstadoLayout.acesso_permitido if protegido else True
     )
     rotulo_perfil = rx.cond(
         perfil_atual == PerfilUsuario.ADMIN.value,
@@ -117,7 +190,7 @@ def layout_base(
     if mostrar_perfil:
         componentes_cabecalho.append(
             rx.cond(
-                perfil_atual != "",
+                layout_autorizado & (perfil_atual != ""),
                 rx.text(
                     "Perfil: ",
                     rotulo_perfil,
@@ -130,16 +203,12 @@ def layout_base(
     if mostrar_sair:
         componentes_cabecalho.append(
             rx.cond(
-                perfil_atual != "",
+                layout_autorizado & (perfil_atual != ""),
                 rx.button(
                     "Sair",
                     type="button",
                     variant="outline",
-                    on_click=rx.call_script(
-                        "fetch('/api/autenticacao/logout', "
-                        "{method: 'POST', credentials: 'same-origin'})"
-                        ".finally(() => window.location.assign('/login'))"
-                    ),
+                    on_click=rx.call_script(_SCRIPT_LOGOUT),
                 ),
                 rx.fragment(),
             )
@@ -156,30 +225,15 @@ def layout_base(
         ),
     ]
     if mostrar_navegacao:
-        menu_perfil = rx.cond(
-            perfil_atual == PerfilUsuario.RECEPCAO.value,
-            rx.fragment(
-                rx.link("Entrada", href="/", color="#183b32"),
-                rx.link("Fila de espera", href="/", color="#183b32"),
-            ),
-            rx.cond(
-                perfil_atual == PerfilUsuario.MEDICO.value,
-                rx.fragment(
-                    rx.link("Atendimentos", href="/", color="#183b32"),
-                    rx.link("Pacientes", href="/", color="#183b32"),
-                ),
-                rx.cond(
-                    perfil_atual == PerfilUsuario.ADMIN.value,
-                    rx.fragment(
-                        rx.link("Visão geral", href="/", color="#183b32"),
-                        rx.link("Parâmetros", href="/", color="#183b32"),
-                    ),
-                    rx.fragment(),
-                ),
+        menu_perfil = rx.foreach(
+            EstadoLayout.links_navegacao,
+            lambda link: rx.link(
+                link["rotulo"],
+                href=link["rota"],
+                color="#183b32",
             ),
         )
         navegacao = rx.flex(
-            rx.link("Início", href="/", color="#183b32"),
             menu_perfil,
             flex_wrap="wrap",
             gap="12px 20px",
@@ -187,7 +241,7 @@ def layout_base(
         )
         conteudos_layout.append(
             rx.cond(
-                perfil_atual != "",
+                layout_autorizado,
                 rx.box(
                     navegacao,
                     border_bottom="1px solid #d5dfd9",
@@ -204,7 +258,7 @@ def layout_base(
             conteudo_protegido,
             rx.fragment(),
         )
-        if protegido
+            if protegido
         else conteudo_protegido
     )
 

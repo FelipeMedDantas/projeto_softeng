@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 from datetime import datetime, timedelta
+import re
 from threading import RLock
 from typing import Callable, TypeVar, cast
 from uuid import uuid4
@@ -234,6 +235,27 @@ class RepositorioMemoria:
         )
         return self.criar("auditoria", registro)
 
+    def registrar_evento_acesso_negado(
+        self,
+        usuario_id: str | None,
+        operacao: str,
+        agora: datetime,
+    ) -> RegistroAuditoria:
+        """Audita uma operação negada sem aceitar dados livres como identificador."""
+
+        if not isinstance(operacao, str) or re.fullmatch(r"[a-z][a-z0-9_]{0,63}", operacao) is None:
+            raise ValueError("A operação de autorização deve ser um identificador técnico válido.")
+
+        registro = RegistroAuditoria(
+            id=f"auditoria-{uuid4().hex}",
+            usuario_id=usuario_id,
+            acao="acesso_negado",
+            entidade="Operacao",
+            entidade_id=operacao,
+            criado_em=agora,
+        )
+        return self.criar("auditoria", registro)
+
     def obter_configuracao(self, chave: str, padrao: T) -> T:
         """Lê uma configuração protegida pelo mesmo lock do repositório."""
 
@@ -277,8 +299,8 @@ _bloqueio_inicializacao_seed = RLock()
 _seed_carregado = False
 
 
-def obter_repositorio() -> RepositorioMemoria:
-    """Inicializa o seed uma vez e devolve o repositório compartilhado."""
+def inicializar_repositorio() -> RepositorioMemoria:
+    """Carrega o seed uma vez e devolve o repositório compartilhado."""
 
     global _seed_carregado
     with _bloqueio_inicializacao_seed:
@@ -292,3 +314,12 @@ def obter_repositorio() -> RepositorioMemoria:
                 _seed_carregado = False
                 raise
     return _repositorio
+
+
+def obter_repositorio() -> RepositorioMemoria:
+    """Devolve o repositório compartilhado depois de garantir o seed."""
+
+    return inicializar_repositorio()
+
+
+inicializar_repositorio()
