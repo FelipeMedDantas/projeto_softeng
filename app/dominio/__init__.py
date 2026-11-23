@@ -1,0 +1,1 @@
+"""Modelos e parâmetros puros do domínio."""

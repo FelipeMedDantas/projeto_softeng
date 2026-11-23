@@ -1,0 +1,15 @@
+# Premissas Adotadas
+
+As decisões abaixo são provisórias. O status `CONFIRMAR` significa que devem ser validadas pelo responsável antes de serem usadas para ampliar o escopo ou distribuir a aplicação além do desenvolvimento local.
+
+| Premissa | Adoção provisória | Justificativa | Status |
+| --- | --- | --- | --- |
+| Validade e ficção dos CPFs de seed | Gerar dígitos verificadores válidos a partir de dados artificiais, usar apenas em ambiente de desenvolvimento e nunca associar a pessoa real. Validade matemática não comprova que o CPF não foi atribuído. | O pedido exige validação matemática e dados fictícios, mas não há consulta autorizada a cadastro oficial que prove não atribuição. | CONFIRMAR |
+| Alcance do armazenamento em memória | Compartilhamento limitado ao processo ativo; os dados são perdidos ao reiniciar e não são sincronizados entre workers. | O requisito exclui banco externo e Xano, e um lock protege threads, não processos distintos. | CONFIRMAR |
+| Semântica de `maior`, `soma` e `media` | Interpretar como máximo, soma e média aritmética das gravidades dos sintomas selecionados. Definir arredondamento e ordem de aplicação do limite `[1, 10]` em change do motor de pontuação. | Os nomes dos modos estão definidos, mas detalhes de cálculo numérico não estão. | CONFIRMAR |
+| Prioridade legal sem acumulação | Se uma ou mais condições legais forem verdadeiras, adicionar `prioridade_legal_pontos` somente uma vez. | O pedido determina que os pontos legais não acumulam, inclusive quando várias condições coincidem. | CONFIRMAR |
+| Bônus de espera | Contar intervalos completos de `intervalo_bonus_min` desde a entrada na fila, somando um ponto por intervalo até `teto_bonus`. Definir origem do horário, fuso e comportamento com relógio inválido em change futura. | O pedido define frequência e teto, mas não a fonte temporal nem casos de relógio. | CONFIRMAR |
+| Capacidade da fila | Tratar `capacidade_fila` como parâmetro configurável; o comportamento ao atingir a capacidade será especificado junto com a tela/fluxo que aceitar novos atendimentos. | O limite padrão está definido, mas não a resposta operacional quando a fila enche. | CONFIRMAR |
+| Menu por perfil nesta fundação | Mostrar apenas estrutura e rótulos representativos; não autenticar, esconder rotas por segurança ou autorizar ações. | Login e bloqueio de rotas foram explicitamente excluídos da Change 01. | CONFIRMAR |
+| Inicialização e reset | Inicialização idempotente; reset limpa alterações em memória e reconstitui o conjunto do seed. | Permite reexecução previsível em desenvolvimento e testes sem duplicar exemplos. | CONFIRMAR |
+| Idioma do código e interface | Usar português em identificadores públicos do domínio, comentários e mensagens de interface, mantendo grafias exigidas por frameworks e APIs externas. | Atende ao requisito linguístico sem alterar nomes oficiais de ferramentas. | CONFIRMAR |

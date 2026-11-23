@@ -1,36 +1,12 @@
-"""Welcome to Reflex! This file outlines the steps to create a basic app."""
+"""Aplicação Reflex do Sistema de Priorização de Atendimento."""
 
 import reflex as rx
 
-from rxconfig import config
+from app.dados.seed import carregar_seed
+from app.paginas.inicio import index
 
 
-class State(rx.State):
-    """The app state."""
+carregar_seed()
 
-
-def index() -> rx.Component:
-    # Welcome Page (Index)
-    return rx.container(
-        rx.color_mode.button(position="top-right"),
-        rx.vstack(
-            rx.heading("Welcome to Reflex!", size="9"),
-            rx.text(
-                "Get started by editing ",
-                rx.code(f"{config.app_name}/{config.app_name}.py"),
-                size="5",
-            ),
-            rx.link(
-                rx.button("Check out our docs!"),
-                href="https://reflex.dev/docs/getting-started/introduction/",
-                is_external=True,
-            ),
-            spacing="5",
-            justify="center",
-            min_height="85vh",
-        ),
-    )
-
-
-app = rx.App()
-app.add_page(index)
+app = rx.App(html_lang="pt-BR")
+app.add_page(index, route="/", title="Sistema de Priorização de Atendimento")

@@ -1,0 +1,1 @@
+"""Acesso e inicialização de dados em memória."""
